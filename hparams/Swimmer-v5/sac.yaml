@@ -1,0 +1,3 @@
+learning_starts: 10000
+ent_coef: 0.2
+gamma: 0.999

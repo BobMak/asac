@@ -1,0 +1,6 @@
+[submodule "apo"]
+	path = apo
+	url = https://github.com/xtma/apo.git
+[submodule "rlpyt"]
+	path = rlpyt
+	url = https://github.com/astooke/rlpyt.git

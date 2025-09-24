@@ -1,0 +1,34 @@
+[project]
+name = "u-chi-learning"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "vlad", email = "vlmr.mko@gmail.com"},
+]
+dependencies = [
+    "gymnasium",
+    "stable-baselines3",
+    "psutil",
+    "gym",
+    "pyprind",
+    "pyyaml",
+    "typeguard",
+    "tensorboard",
+    "gymnasium[mujoco]",
+    "seaborn",
+    "tbparse",
+    "sb3-contrib",
+    "rliable>=1.2.0",
+]
+requires-python = "==3.12.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.16",
+]
