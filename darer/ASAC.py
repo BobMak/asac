@@ -46,7 +46,6 @@ class ASAC(BaseAgent):
         self.nS = get_flattened_obs_dim(self.env.observation_space)
         self.new_theta = torch.tensor(0.0, device=self.device)
         self.theta = torch.tensor(0.0, device=self.device, requires_grad=True)
-        self.theta_optimizer = torch.optim.Adam([self.theta], lr=self.tau_theta)
 
         # Set up the logger:
         self.logger = logger_at_folder(self.tensorboard_log,
@@ -127,7 +126,7 @@ class ASAC(BaseAgent):
 
 
     def gradient_descent(self, batch, grad_step):
-        states, actions, next_states, dones, rewards, _ = batch
+        states, actions, next_states, dones, rewards = batch
         # ent_coef = self.beta ** (-1)
 
         optimizers = [self.actor_optimizer, self.q_optimizers]
@@ -171,29 +170,13 @@ class ASAC(BaseAgent):
             
         # Get current Q-values estimates for each critic network
         # using action from the replay buffer
-        current_q_values = th.cat(self.online_critics(states, actions), dim=1)
-        # subtract the baseline @ origin:
-        # online_baseline = torch.cat(
-        #         self.online_critics(
-        #         torch.zeros(self.nS),
-        #         torch.zeros(self.nA)
-        #         )
-        #     )
-        # current_q_values = current_q_values - online_baseline
-        # current_q_values = [current_q_value - online_baseline for current_q_value in current_q_values]
+        current_q_values = self.online_critics(states, actions)
 
         with th.no_grad():
             # Select action according to policy
             next_actions, next_log_prob = self.actor.action_log_prob(next_states)
             # Compute the next Q values: min over all critics targets
             next_q_values = th.cat(self.target_critics(next_states, next_actions), dim=1)
-            # always subtract the mean of target q values to try and keep it centered (in terms of its span):
-            # self.baseline = torch.cat(
-            #     self.target_critics(
-            #     torch.zeros(self.nS),
-            #     torch.zeros(self.nA)
-            #     )
-            # )
             next_q_values = self.aggregator_fn(next_q_values, dim=1)
             # add entropy term
             next_v_values = next_q_values - ent_coef * (next_log_prob.reshape(-1, 1) - self.logpi0)
@@ -201,44 +184,39 @@ class ASAC(BaseAgent):
             # target_q_values = rewards +  * self.gamma * next_q_values
             if self.use_dones:
                 # make the penalty same as mean of non-terminating rewards:
-                # penalty = th.mean(th.gather(rewards, dim=0, index=dones.long()))
-                penalty = th.max(rewards[dones.long()])
-                self.penalty = penalty * self.learning_rate + (1 - self.learning_rate) * self.penalty
+                penalty = 20 * th.max(th.gather(rewards, dim=0, index=dones.long()))
+                self.penalty = penalty * self.tau_theta + (1 - self.tau_theta) * self.penalty
                 self.logger.record("train/penalty", self.penalty.item())
                 next_v_values = next_v_values * (1 - dones) - self.penalty * dones # penalty of 100 for resetting
-            # new_theta = th.mean(rewards - ent_coef * (log_prob.reshape(-1, 1) - self.logpi0))
-            # log the baseline:
-            # self.logger.record("train/baseline", self.baseline.mean().item())
+            new_theta = th.mean(rewards - ent_coef * (log_prob.reshape(-1, 1) - self.logpi0))
+            # always subtract the mean of target q values to try and keep it centered (in terms of its span):
+            self.baseline = torch.mean(torch.cat(
+                self.target_critics(
+                torch.zeros(self.nS),
+                torch.zeros(self.nA)
+                )
+            ))
+            # self.baseline += torch.mean(rewards - self.theta)
+            next_v_values = next_v_values - self.baseline
 
-            target_q_values = rewards + next_v_values
+            # log the baseline:
+            self.logger.record("train/baseline", self.baseline.item())
+
+            target_q_values = rewards - self.theta + next_v_values
 
             self.logger.record(f"train/next_logprob", next_log_prob.mean().item())
-            self.logger.record(f"train/new_theta", self.new_theta.item())
+            self.logger.record(f"train/new_theta", new_theta.item())
             self.logger.record(f"train/mean_reward", rewards.mean().item())
 
-
-        rhs = rewards - self.theta + next_v_values
-        lhs = current_q_values.detach()
-        theta_loss = sum([F.mse_loss(rhs.squeeze(), q) for q in lhs.T])
-        self.logger.record("train/theta_loss", theta_loss.item())
-        # Optimize theta:
-        self.theta_optimizer.zero_grad()
-        theta_loss.backward()
-        self.theta_optimizer.step()
+        # Reduce tau_theta:
+        self.logger.record("train/tau_theta", self.tau_theta)
+        self.theta = self.theta * (1 - self.tau_theta) + self.tau_theta * new_theta 
 
         # Compute critic loss
-        target_q_values = target_q_values.squeeze()
-        critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values- self.theta) for current_q in current_q_values.T)
-        # l2_loss = 0
-        # Add L2 loss on weights:
-        # for net in self.online_critics:
-        #     for param in net.parameters():
-        #         l2_loss += 1e-7 *  param.pow(2).sum() 
-        l2_loss = 1e-5 * sum(torch.sum(torch.square(current_q)) for current_q in current_q_values)
+        critic_loss = 0.5 * sum(F.mse_loss(current_q, target_q_values) for current_q in current_q_values)
         assert isinstance(critic_loss, th.Tensor)  # for type checker
         self.logger.record("train/critic_loss", critic_loss.item())
-        self.logger.record("train/l2_loss", l2_loss.item())
-        critic_loss += l2_loss
+
         # self.logger.record("train/td-scaling", scaling.item())
         # Log the mean q values:
         self.logger.record("train/mean_q", next_q_values.mean().item())
@@ -260,17 +238,7 @@ class ASAC(BaseAgent):
         # Compute actor loss
         # Min over all critic networks
         q_values_pi = th.cat(self.online_critics(states, actions_pi), dim=1)
-        # subtract the baseline:
-        # new baseline for the online:
-        # online_baseline = torch.cat(
-        #         self.online_critics(
-        #         torch.zeros(self.nS),
-        #         torch.zeros(self.nA)
-        #         )
-        #     )
-        # q_values_pi = q_values_pi - online_baseline
         min_qf_pi = self.aggregator_fn(q_values_pi, dim=1)
-        self.logger.record("train/min_qf_pi", min_qf_pi.mean().item())
         actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
         self.logger.record("train/actor_loss", actor_loss.item())
 
@@ -278,9 +246,8 @@ class ASAC(BaseAgent):
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         # clip the actor gradient:
-        # if self.max_grss.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm):
-        #    th.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-
+        if self.max_grad_norm is not None:
+            th.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         actor_max_grad = get_max_grad(self.actor)
         self.logger.record("train/actor_max_grad", actor_max_grad)
         self.actor_optimizer.step()
@@ -288,17 +255,11 @@ class ASAC(BaseAgent):
         # log newest temperature:
         self.logger.record("train/temp", ent_coef.item())
   
-
     def _update_target(self):
         # TODO: Make sure we use gradient steps to track target updates:
         # if gradient_step % self.target_update_interval == 0:
         for net in range(self.num_nets):
             polyak_update(self.online_critics.nets[net].parameters(), self.target_critics.nets[net].parameters(), self.tau)
-        
-    def _update_prior(self):
-        if self.use_ppi:
-            # Polyak average the prior:
-            self.target_prior.polyak(self.online_prior, self.tau)
 
     def _sample_action(self, state, n_envs=1):
         """
