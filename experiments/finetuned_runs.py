@@ -42,14 +42,13 @@ algo_to_agent_class = {
     'atrpo': ATRPO
 }
 
-
 if __name__=='__main__':
     args = argparse.ArgumentParser()
     args.add_argument('--count', type=int, default=1)
     args.add_argument('--env_id', type=str, default='HalfCheetah-v5')
     args.add_argument('--algo', type=str, default='asac')
     args.add_argument('--device', type=str, default='auto')
-    args.add_argument('--exp-name', type=str, default='asac-vs-sac')
+    args.add_argument('--exp-name', type=str, default='paper')
     args.add_argument('--name', type=str, default='')
     args.add_argument('--eval_steps', type=int, default=None)
     args.add_argument('--save-best', type=bool, default=True)
