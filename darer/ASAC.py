@@ -53,6 +53,7 @@ class ASAC(BaseAgent):
                                        algo_name=f'{self.env_str}-{self.algo_name}')
         self.log_hparams(self.logger)
         self.logpi0 = th.log(th.tensor(1/self.nA, device=self.device))
+        self.now_logpi0 = th.log(th.tensor(1/self.nA, device=self.device))
         # self.ent_coef_optimizer: Optional[th.optim.Adam] = None
         if self.beta != 'auto':
             self.ent_coef = self.beta**(-1)
@@ -88,6 +89,8 @@ class ASAC(BaseAgent):
                     self.nS,
                     )
         # TODO: consider initializing the prior actor weights in line with the actor itself, until the ppi warmup has stopped.
+        # TODO: consider a "warmup" period that does a linear combo between the maxent bonus and the ppi entropy
+        # TODO: consider instead something like a hard reset also with actor_prior target (used for kl calc.)
             
         # send the actor to device:
         self.actor.to(self.device)
@@ -173,7 +176,9 @@ class ASAC(BaseAgent):
                 self.penalty = penalty * self.tau_theta + (1 - self.tau_theta) * self.penalty
                 self.logger.record("train/penalty", self.penalty.item())
                 next_v_values = next_v_values * (1 - dones) - self.penalty * dones # penalty of 100 for resetting
-            new_theta = th.mean(rewards - ent_coef * (log_prob.reshape(-1, 1) - self.logpi0))
+            if self.env_steps > self.ppi_warmup_steps:
+                self.now_logpi0 = log_prob_prior.detach().reshape(-1,1) # gets reassigned from its initial maxent value
+            new_theta = th.mean(rewards - ent_coef * (log_prob.reshape(-1, 1) - self.now_logpi0))
             # always subtract the mean of target q values to try and keep it centered (in terms of its span):
             self.baseline = torch.mean(torch.cat(
                 self.target_critics(
