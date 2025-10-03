@@ -126,7 +126,7 @@ class ASAC(BaseAgent):
 
 
     def gradient_descent(self, batch, grad_step):
-        states, actions, next_states, dones, rewards, _ = batch
+        states, actions, next_states, dones, rewards = batch
         # ent_coef = self.beta ** (-1)
 
         optimizers = [self.actor_optimizer, self.q_optimizers]
