@@ -26,6 +26,7 @@ class ASAC(BaseAgent):
                  policy: str = 'MlpPolicy',
                  actor_learning_rate: Optional[float] = None,
                  use_ppi: bool = False,
+                 ppi_warmup_steps = 20_000,
                  use_dones: bool = True,
                  name_suffix: str = '',
                  **kwargs,
@@ -46,7 +47,7 @@ class ASAC(BaseAgent):
         self.nS = get_flattened_obs_dim(self.env.observation_space)
         self.new_theta = torch.tensor(0.0, device=self.device)
         self.theta = torch.tensor(0.0, device=self.device, requires_grad=True)
-
+        self.ppi_warmup_steps = ppi_warmup_steps
         # Set up the logger:
         self.logger = logger_at_folder(self.tensorboard_log,
                                        algo_name=f'{self.env_str}-{self.algo_name}')
@@ -86,6 +87,7 @@ class ASAC(BaseAgent):
                     FlattenExtractor(self.env.observation_space),
                     self.nS,
                     )
+        # TODO: consider initializing the prior actor weights in line with the actor itself, until the ppi warmup has stopped.
             
         # send the actor to device:
         self.actor.to(self.device)
@@ -100,17 +102,8 @@ class ASAC(BaseAgent):
                                                  lr=self.actor_learning_rate)
         # TODO: instead, we can try a rolling avg of weights
 
-        if isinstance(self.ent_coef, str) and self.ent_coef.startswith("auto"):
-            # Default initial value of ent_coef when learned
-            init_value = 1.0
-            if "_" in self.ent_coef:
-                init_value = float(self.ent_coef.split("_")[1])
-                assert init_value > 0.0, "The initial value of ent_coef must be greater than 0"
-
-            # Note: we optimize the log of the entropy coeff which is slightly different from the paper
-            # as discussed in https://github.com/rail-berkeley/softlearning/issues/37
-            self.log_ent_coef = th.log(th.ones(1, device=self.device) * init_value).requires_grad_(True)
-            self.ent_coef_optimizer = th.optim.Adam([self.log_ent_coef], lr=1e-4)#, lr=self.lr_schedule(1))
+        if isinstance(self.ent_coef, str):
+            raise ValueError("for ppi, ent coef should be fixed to a constant.") #TODO: consider the combination
         else:
             # Force conversion to float
             # this will throw an error if a malformed string (different from 'auto')
@@ -164,10 +157,13 @@ class ASAC(BaseAgent):
         with th.no_grad():
             # Select action according to policy
             next_actions, next_log_prob = self.actor.action_log_prob(next_states)
+            next_priors, next_log_prob_prior = self.prior_actor.action_log_prob(next_states)
             # Compute the next Q values: min over all critics targets
             next_q_values = th.cat(self.target_critics(next_states, next_actions), dim=1)
             next_q_values = self.aggregator_fn(next_q_values, dim=1)
             # add entropy term
+            if self.env_steps > self.ppi_warmup_steps:
+                self.logpi0 = next_log_prob_prior.reshape(-1,1) # gets reassigned from its initial maxent value
             next_v_values = next_q_values - ent_coef * (next_log_prob.reshape(-1, 1) - self.logpi0)
             # td error + entropy term
             # target_q_values = rewards +  * self.gamma * next_q_values
@@ -240,6 +236,15 @@ class ASAC(BaseAgent):
         actor_max_grad = get_max_grad(self.actor)
         self.logger.record("train/actor_max_grad", actor_max_grad)
         self.actor_optimizer.step()
+
+        # Fit the log prob onto the log prob prior:
+        # TODO: is this ok or should we wait for ppi warmup here also? I guess this is part of the warmup... to align the two
+        # TODO: is this the correct sign?
+        prior_loss = (log_prob.detach() - log_prob_prior).mean()
+
+        self.prior_actor_optimizer.zero_grad()
+        prior_loss.backward()
+        self.prior_actor_optimizer.step()
 
         # log newest temperature:
         self.logger.record("train/temp", ent_coef.item())
