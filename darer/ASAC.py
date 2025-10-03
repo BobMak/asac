@@ -80,16 +80,25 @@ class ASAC(BaseAgent):
                     FlattenExtractor(self.env.observation_space),
                     self.nS,
                     )
+        
+        self.prior_actor = Actor(self.env.observation_space, self.env.action_space,
+                    [self.hidden_dim, self.hidden_dim],
+                    FlattenExtractor(self.env.observation_space),
+                    self.nS,
+                    )
             
         # send the actor to device:
         self.actor.to(self.device)
-        # TODO: Try a fixed covariance network (no/ignored output)
+        self.prior_actor.to(self.device)
         opts = [torch.optim.Adam(q.parameters(), lr=self.learning_rate)
                 for q in self.online_critics]
         
         self.q_optimizers = Optimizers(opts)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
                                                  lr=self.actor_learning_rate)
+        self.prior_actor_optimizer = torch.optim.Adam(self.prior_actor.parameters(),
+                                                 lr=self.actor_learning_rate)
+        # TODO: instead, we can try a rolling avg of weights
 
         if isinstance(self.ent_coef, str) and self.ent_coef.startswith("auto"):
             # Default initial value of ent_coef when learned
