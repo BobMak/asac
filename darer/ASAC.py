@@ -154,28 +154,8 @@ class ASAC(BaseAgent):
         # Action by the current actor for the sampled state
         actions_pi, log_prob = self.actor.action_log_prob(states)
         log_prob = log_prob.reshape(-1, 1)
-
-        ent_coef_loss = None
-        if self.ent_coef_optimizer is not None and self.log_ent_coef is not None:
-            # Important: detach the variable from the graph
-            # so we don't change it with other losses
-            # see https://github.com/rail-berkeley/softlearning/issues/60
-            ent_coef = th.exp(self.log_ent_coef.detach())
-            # ent_coef_loss = -((log_prob + self.target_entropy).detach()).mean()
-            ent_coef_loss = -(self.log_ent_coef * (log_prob + self.target_entropy).detach()).mean()
-
-            # ent_coef_losses.append(ent_coef_loss.item())
-        else:
-            ent_coef = self.ent_coef_tensor
-
-        # ent_coefs.append(ent_coef.item())
-
-        # Optimize entropy coefficient, also called
-        # entropy temperature or alpha in the paper
-        if ent_coef_loss is not None and self.ent_coef_optimizer is not None:
-            self.ent_coef_optimizer.zero_grad()
-            ent_coef_loss.backward()
-            self.ent_coef_optimizer.step()
+        actions_prior, log_prob_prior = self.prior_actor.action_log_prob(states)
+        ent_coef = self.ent_coef_tensor
             
         # Get current Q-values estimates for each critic network
         # using action from the replay buffer
