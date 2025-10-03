@@ -229,7 +229,11 @@ class ASAC(BaseAgent):
         # Min over all critic networks
         q_values_pi = th.cat(self.online_critics(states, actions_pi), dim=1)
         min_qf_pi = self.aggregator_fn(q_values_pi, dim=1)
-        actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+        if self.env_steps > self.ppi_warmup_steps:
+            actor_loss = (ent_coef * (log_prob - log_prob_prior.detach()) - min_qf_pi).mean()
+        else: # use maxent 
+            actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+
         self.logger.record("train/actor_loss", actor_loss.item())
 
         # Optimize the actor
