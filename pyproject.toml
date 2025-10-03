@@ -6,21 +6,21 @@ authors = [
     {name = "vlad", email = "vlmr.mko@gmail.com"},
 ]
 dependencies = [
-    "gymnasium",
-    "stable-baselines3",
+    "gymnasium==1.0.0",
+    "stable-baselines3==2.4.0",
     "psutil",
     "gym",
     "pyprind",
     "pyyaml",
     "typeguard",
     "tensorboard",
-    "gymnasium[mujoco]",
+    "gymnasium[mujoco]==1.0.0",
     "seaborn",
     "tbparse",
     "sb3-contrib",
     "rliable>=1.2.0",
 ]
-requires-python = "==3.12.*"
+requires-python = ">=3.10.*"
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -31,4 +31,5 @@ distribution = false
 [dependency-groups]
 dev = [
     "debugpy>=1.8.16",
+    "pip-tools>=7.5.1",
 ]
