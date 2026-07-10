@@ -190,10 +190,15 @@ def make_train_step(nS, nA, aggregator, learn_ent_coef, ent_coef_value,
 
         penalty = ts.penalty
         if use_dones:
-            # make the penalty same as mean of non-terminating rewards:
-            raw_penalty = 20 * jnp.max(
-                jnp.take_along_axis(rewards, dones.astype(jnp.int32), axis=0))
-            penalty = raw_penalty * tau_theta + (1 - tau_theta) * ts.penalty
+            # Scale the reset penalty to the largest non-terminating reward in
+            # the batch. (The torch original gathers rewards indexed *by* the
+            # done flag, which reads rewards[0]/rewards[1] instead.) If the
+            # whole batch is terminal, keep the previous penalty.
+            nonterminal = dones == 0
+            raw_penalty = 20 * jnp.max(jnp.where(nonterminal, rewards, -jnp.inf))
+            penalty = jnp.where(jnp.any(nonterminal),
+                                raw_penalty * tau_theta + (1 - tau_theta) * ts.penalty,
+                                ts.penalty)
             next_v_values = next_v_values * (1 - dones) - penalty * dones
 
         new_theta = jnp.mean(rewards - ent_coef * (log_prob - logpi0))
@@ -385,7 +390,7 @@ class ASACJax(BaseAgent):
         self.theta = self.train_state.theta
         self.lr = self.learning_rate
         self.logger.record("train/tau_theta", self.tau_theta)
-        for name, value in metrics.items():
+        for name, value in jax.device_get(metrics).items():
             self.logger.record(f"train/{name}", float(value))
 
     def _update_target(self):

@@ -183,9 +183,12 @@ class ASAC(BaseAgent):
             # td error + entropy term
             # target_q_values = rewards +  * self.gamma * next_q_values
             if self.use_dones:
-                # make the penalty same as mean of non-terminating rewards:
-                penalty = 20 * th.max(th.gather(rewards, dim=0, index=dones.long()))
-                self.penalty = penalty * self.tau_theta + (1 - self.tau_theta) * self.penalty
+                # Scale the reset penalty to the largest non-terminating reward in
+                # the batch. If the whole batch is terminal, keep the previous penalty.
+                nonterminal = dones == 0
+                if nonterminal.any():
+                    penalty = 20 * th.max(rewards[nonterminal])
+                    self.penalty = penalty * self.tau_theta + (1 - self.tau_theta) * self.penalty
                 self.logger.record("train/penalty", self.penalty.item())
                 next_v_values = next_v_values * (1 - dones) - self.penalty * dones # penalty of 100 for resetting
             new_theta = th.mean(rewards - ent_coef * (log_prob.reshape(-1, 1) - self.logpi0))
